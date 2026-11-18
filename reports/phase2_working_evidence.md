@@ -4,6 +4,10 @@
 
 The supplied student data contains 80 training trips and 10 student-test trips. The evaluator ZIP contains a separate set of 10 trips and is stored locally under the ignored `data/evaluator_test/` directory. It is not included in the model-training or Bayesian-optimization notebook. The evaluator routes are used only by the API's final server-side metric calculation; the prediction copy of each trip has an empty route array.
 
+## Feature set carried forward from Phase 1
+
+The Phase 2 notebook reuses the five features implemented in `src/pathsnap/matcher.py`: perpendicular GPS-to-segment distance (`distance_m`), absolute GPS movement-versus-road heading difference (`heading_difference_rad`), clipped position along the segment (`along_segment_fraction`), road segment length (`segment_length_m`), and GPS speed since the previous observation (`gps_speed_mps`). The Phase 2 report describes this same feature set. The feature-importance check in Phase 1 ranked the first three highest; all five were retained for the comparisons.
+
 ## Phase 2 model comparison
 
 The 80 training trips were divided into five GroupKFold folds. All rows from a trip remain in one fold. Candidate-level positive rows match the nearest geometry on the supplied reference route; alternative candidates are negative. Candidate misses are excluded from fitting. Each fold uses all positive fit rows and up to four sampled negatives per positive, with the fixed seed 42 and a 200,000-row cap. KNN is additionally limited to a balanced 5,000-row fit sample.
