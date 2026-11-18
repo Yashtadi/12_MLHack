@@ -60,6 +60,13 @@ def _reference_labels(trip: Trip, arc_ids, starts, vectors, lengths, gps_xy):
     return out
 
 
+def reference_labels(trip: Trip) -> np.ndarray:
+    """Return nearest supplied-route arc IDs for server-side evaluation only."""
+    lon0,lat0,arc_ids,starts,ends,vectors,lengths=_geometry(trip)
+    gps=_xy(trip.track[:,:2],lon0,lat0)
+    return _reference_labels(trip,arc_ids,starts,vectors,lengths,gps)
+
+
 def generate_candidates(trip: Trip, k: int=16) -> CandidateBatch:
     lon0,lat0,arc_ids,starts,ends,vectors,lengths=_geometry(trip)
     if not len(arc_ids): raise ValueError(f"Trip {trip.trip_id} has no valid road segments")

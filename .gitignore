@@ -5,6 +5,7 @@ __pycache__/
 .env
 data/raw/
 data/Student folder/
+data/evaluator_test/
 node_modules/
 web/dist/
 .mplconfig/
@@ -12,3 +13,8 @@ web/dist/
 # Per-click demo artifacts (the notebooks keep their selected-trip maps)
 maps/phase1_????????.html
 outputs/phase1_????????.json
+outputs/evaluator_*.json
+outputs/evaluator_*.csv
+maps/evaluator_*.html
+maps/dev_????????.html
+outputs/dev_????????.json

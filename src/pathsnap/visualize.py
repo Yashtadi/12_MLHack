@@ -7,7 +7,7 @@ from .data import Trip
 from .matcher import CandidateBatch
 
 
-def create_map(trip: Trip, batch: CandidateBatch, predicted: np.ndarray, out_path: Path, max_gps_points=2500):
+def create_map(trip: Trip, batch: CandidateBatch, predicted: np.ndarray, out_path: Path, max_gps_points=2500, show_reference_route=True):
     center=[float(np.mean(trip.track[:,1])),float(np.mean(trip.track[:,0]))]
     m=folium.Map(location=center,zoom_start=14,control_scale=True,tiles="OpenStreetMap")
     MiniMap(toggle_display=True).add_to(m)
@@ -39,7 +39,8 @@ def create_map(trip: Trip, batch: CandidateBatch, predicted: np.ndarray, out_pat
             points.append([float(trip.nodes[v,1]),float(trip.nodes[v,0])])
         if points:folium.PolyLine(points,color=color,weight=5,opacity=.88,tooltip=name).add_to(layer)
         layer.add_to(m)
-    route_layer("Reference route",trip.route,"#2e7d32",False)
+    if show_reference_route:
+        route_layer("Reference route",trip.route,"#2e7d32",False)
     route_layer("Predicted route",predicted,"#e53935",True)
     folium.LayerControl(collapsed=False).add_to(m)
     out_path.parent.mkdir(parents=True,exist_ok=True); m.save(str(out_path)); return out_path
