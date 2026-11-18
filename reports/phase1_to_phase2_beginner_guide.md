@@ -166,7 +166,7 @@ Follow the copyable setup in the project's `README.md`. Before the viva, confirm
 6. `notebooks/06_Phase2_Model_Validation_Tuning.ipynb` — grouped CV, five-model comparison, Bayesian tuning, student comparison, final model save.
 7. `src/pathsnap/server.py` — API endpoints and server-side label separation.
 8. `web/index.html` — trip picker, API connection, result cards, and map display.
-9. `reports/phase2_working_evidence.md` and `reports/PathSnap_Phase2_Technical_Report.pdf` — measured results and limitations.
+9. `reports/phase2_working_evidence.md` and `reports/PathSnap_Phase1_Phase2_Technical_Report.pdf` — measured results and limitations across both phases.
 
 ## 10. A simple spoken summary
 

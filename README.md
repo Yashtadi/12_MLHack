@@ -15,7 +15,7 @@ Open these in order for the data-to-prediction walkthrough:
 5. `notebooks/05_Initial_Evaluation.ipynb` — Phase 1 comparison, initial decoder analysis, and map.
 6. `notebooks/06_Phase2_Model_Validation_Tuning.ipynb` — five-fold GroupKFold comparison, student development metrics, 15-trial Optuna TPE search, tuned/untuned comparison, and final model fitting. Evaluator trips are not loaded in this notebook.
 
-Executed notebook outputs and comparison CSVs are included. `reports/phase1_study_guide.md` and `reports/phase2_working_evidence.md` record the earlier walkthrough and measured results. `reports/PathSnap_Phase2_Technical_Report.pdf` is the technical report.
+Executed notebook outputs and comparison CSVs are included. `reports/phase1_study_guide.md` and `reports/phase2_working_evidence.md` record the earlier walkthrough and measured results. `reports/PathSnap_Phase1_Phase2_Technical_Report.pdf` is the single combined technical report; rebuild it with `.venv/bin/python reports/build_technical_report.py`.
 
 ## Data setup
 

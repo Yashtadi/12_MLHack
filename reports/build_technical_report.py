@@ -9,7 +9,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = Path(__file__).resolve().parent / "figures"
-OUT = ROOT / "reports" / "PathSnap_Phase2_Technical_Report.pdf"
+OUT = ROOT / "reports" / "PathSnap_Phase1_Phase2_Technical_Report.pdf"
 PAGE = landscape(A4)
 styles = getSampleStyleSheet()
 styles.add(ParagraphStyle(name="CoverX", parent=styles["Title"], fontSize=28, leading=34,
@@ -51,28 +51,28 @@ def footer(canvas, doc):
     canvas.saveState()
     canvas.setFont("Helvetica", 7.5)
     canvas.setFillColor(colors.HexColor("#728096"))
-    canvas.drawString(15*mm, 9*mm, "PathSnap | Phase 2 technical report | Results from committed development evidence")
+    canvas.drawString(15*mm, 9*mm, "PathSnap | Combined Phase 1 + Phase 2 technical report")
     canvas.drawRightString(PAGE[0]-15*mm, 9*mm, str(doc.page))
     canvas.restoreState()
 
 doc = SimpleDocTemplate(str(OUT), pagesize=PAGE, rightMargin=15*mm, leftMargin=15*mm,
                         topMargin=13*mm, bottomMargin=15*mm,
-                        title="PathSnap Phase 2 Technical Report", author="PathSnap Team")
+                        title="PathSnap Phase 1 and Phase 2 Technical Report", author="PathSnap Team")
 story = []
 
 # Cover
 story += [Spacer(1, 23*mm), p("PATHSNAP", "CoverX"),
-          p("Phase 2 | Technical Report and Working Evaluation", "SubX"),
+          p("Combined Phase 1 + Phase 2 | Technical Report and Working Evaluation", "SubX"),
           Spacer(1, 8*mm), p("GPS map matching from noisy observations to a connected road route", "SubX"),
           Spacer(1, 12*mm), p("What this phase delivers", "H1X"),
-          p("A reproducible data pipeline, five trained candidate-scoring models, grouped cross-validation, Bayesian tuning, a Viterbi-style route decoder, a Folium map, and an evaluator-facing API/UI. The API keeps reference labels on Laptop 1 and returns predictions and server-computed scores to the browser."),
-          Spacer(1, 5*mm), p("Model family selected: Hist Gradient Boosting | Selection objective: five-fold grouped candidate Macro F1 | Optuna TPE: 15 trials"),
-          Spacer(1, 8*mm), p("This report distinguishes the development partition from the reserved evaluator partition. It records measured tradeoffs and limitations rather than presenting a single score as proof of complete route correctness.", "SubX"), PageBreak()]
+          p("Phase 1 built the first preprocessing, candidate-generation and five-model baseline using a whole-trip holdout. Phase 2 strengthened model selection with grouped cross-validation, tuned Hist Gradient Boosting, added route decoding, and delivered the evaluator-facing API/UI. The API keeps reference labels on Laptop 1 and returns predictions and server-computed scores to the browser."),
+          Spacer(1, 5*mm), p("Phase 1 provisional winner: Hist Gradient Boosting by validation Top-1 | Phase 2 winner: Hist Gradient Boosting by grouped-CV candidate Macro F1 | Optuna TPE: 15 trials"),
+          Spacer(1, 8*mm), p("This single report distinguishes the two phases and their evaluation protocols, as well as development partitions from the reserved evaluator partition. It records measured tradeoffs and limitations rather than presenting one score as proof of complete route correctness.", "SubX"), PageBreak()]
 
 # Dataset and preprocessing
 story += [p("1. Problem, data and preprocessing", "H1X"),
           p("PathSnap receives a time-ordered GPS track and a trip-specific directed road graph. For every observation, it proposes nearby road arcs, scores them, and reconstructs a plausible sequence. The supplied files are <font name='Courier'>.track</font> (GPS coordinates/time), <font name='Courier'>.nodes</font> (road endpoints), <font name='Courier'>.arcs</font> (directed connections), and <font name='Courier'>.route</font> (reference route)."),
-          p("Partition use: 80 training trips are used for grouped CV and tuning; 10 student-test trips are used for development comparison; 10 separate evaluator trips are reserved for the server-side final check. Evaluator labels are not given to the prediction model or browser."),
+          p("Partition use: 80 training trips are used for model fitting and validation; 10 student-test trips are used for development comparison; 10 separate evaluator trips are reserved for the Phase 2 server-side final check. The evaluator archive was not available during Phase 1. In Phase 2, evaluator labels are not given to the prediction model or browser."),
           p("Preprocessing validates the file structure, numeric values, coordinate ranges, timestamp order, time gaps, and arc endpoint references. Track rows are kept in time order. Coordinates are projected into local metres for geometry calculations; longitude and latitude are retained for maps. In the recorded inventory, no GPS rows were removed, no invalid/non-finite coordinates were found, and no non-increasing timestamp steps were found."),
           fig("eda_partition_sizes.png", 118*mm),
           p("Figure 1. Recorded partition sizes. The data inventory is in <font name='Courier'>outputs/dataset_inventory.csv</font>; the exploration and preprocessing steps are shown in notebooks 01 and 02.", "SX"),
@@ -92,8 +92,24 @@ story += [p("2. Candidate generation and feature choices", "H1X"),
           p("Figure 2. Permutation importance from Phase 1. It measures the change in Macro F1 when a feature is shuffled; it is a diagnostic, not proof of causality. All five features were retained for a consistent model comparison.", "SX"),
           p("Training labels are approximated by assigning each GPS point to the nearest geometric segment among its supplied reference route. Intersections and loops can make that label ambiguous. Candidate Macro F1 therefore measures candidate classification against these approximate labels, not exact route-level correctness."), PageBreak()]
 
-# Five model comparison table
-story += [p("3. Five-model comparison", "H1X"),
+# Phase 1 initial model training and selection
+story += [p("3. Phase 1: first model training and selection", "H1X"),
+          p("Round 1 used a single whole-trip holdout from the 80 training trips: 64 trips for fitting and 16 for validation. GroupShuffleSplit used seed 42, preventing points from the same trip from appearing in both sets. All five models used the same candidate features and labels; all positive candidates were retained and up to four negative candidates per positive were sampled, with a 200,000-row cap. KNN used an additional balanced sample of up to 5,000 fit rows."),
+          p("The Round 1 selection rule was highest validation observation Top-1. Hist Gradient Boosting scored 71.45%, narrowly ahead of Random Forest at 71.09% (0.36 percentage points). HGB also had the highest validation candidate Macro F1 and lowest candidate log loss in this run. After selection, it was refit on all 80 training trips and saved as <font name='Courier'>outputs/phase1_model.joblib</font>. Student-test metrics were development comparisons, not the selection rule."),
+          table([["Learned model", "Validation Top-1", "Validation candidate\nMacro F1", "Validation log\nloss", "Student Top-1", "Student candidate\nMacro F1", "Student log\nloss", "Student inference\nsec / 19,160 obs"],
+                 ["Logistic Regression", "55.22%", "0.6301", "0.4178", "56.50%", "0.6022", "0.4722", "0.0048"],
+                 ["KNN", "60.79%", "0.6965", "0.5694", "65.69%", "0.7251", "0.5413", "0.4895"],
+                 ["Decision Tree", "68.87%", "0.7989", "0.2398", "72.94%", "0.8024", "0.2230", "0.0074"],
+                 ["Random Forest", "71.09%", "0.8323", "0.1451", "75.14%", "0.8414", "0.1385", "0.1887"],
+                 ["Hist Gradient Boosting", "71.45%", "0.8478", "0.1134", "75.45%", "0.8609", "0.1065", "0.1176"]],
+                [37*mm, 27*mm, 32*mm, 25*mm, 24*mm, 31*mm, 24*mm, 35*mm], 6.5),
+          Spacer(1, 3*mm), fig("phase1_model_comparison.png", 142*mm),
+          p("Figure 3. Round 1 validation and student-development metrics. The non-learning nearest-road baseline reached 55.37% validation Top-1 and 53.48% student Top-1. Validation candidate miss rate was 7.57% and student-test miss rate 6.35%; candidate misses come from the shared candidate generator, not from a particular classifier.", "SX"),
+          p("Phase 1 settings: Logistic Regression used StandardScaler, max_iter=250, balanced classes and seed 42; KNN used StandardScaler, 9 distance-weighted neighbors and a balanced fit sample of up to 5,000 rows; Decision Tree used depth 14, leaf size 4 and balanced classes; Random Forest used 80 trees, depth 18, leaf size 2 and balanced subsampling; HGB used 100 iterations, learning rate 0.08, 15 leaf nodes and L2=1.0. Seed was 42 for randomized estimators. Section 5 records the Phase 2 comparison settings; the main listed change is Logistic Regression max_iter=300 in that phase."),
+          p("Phase 1 initial route decoding (student-test): classifier Top-1 75.45% versus Viterbi 57.64%; trip-mean direct continuity 25.41% versus 73.86%. The evaluator-only archive was not available in Phase 1, so no Phase 1 evaluator score is claimed. Phase 1 used a single holdout; Phase 2 later used five-fold GroupKFold, so the two phase scores are not directly interchangeable."), PageBreak()]
+
+# Phase 2 five model comparison table
+story += [p("4. Phase 2: five-model grouped-CV comparison", "H1X"),
           p("Training rows are candidate pairs. The positive candidate is the nearest route segment; other candidates are negatives. Each fold uses positive rows and up to four sampled negatives per positive, capped at 200,000 rows; KNN is additionally fit on a balanced 5,000-row sample. Sampling seed is 42. Five-fold GroupKFold splits by trip, so observations from one trip do not leak across train/validation."),
           p("The selected objective was mean CV candidate Macro F1. Top-1 is a separate observation-level metric: choose the highest-scored candidate for each GPS point. Direct continuity checks whether consecutive chosen arcs connect directly."),
           table([["Model", "CV Macro F1\nmean ± SD", "CV Top-1", "CV direct\ncontinuity", "Student Top-1", "Student candidate\nMacro F1", "Student log\nloss", "Student direct\ncontinuity", "Inference\nsec / 19,160 obs"],
@@ -104,23 +120,26 @@ story += [p("3. Five-model comparison", "H1X"),
                  ["Hist Gradient Boosting", "0.8485 ± 0.0251", "67.87%", "27.51%", "75.44%", "0.8613", "0.1067", "25.39%", "0.1418"]],
                 [37*mm, 30*mm, 22*mm, 26*mm, 23*mm, 29*mm, 22*mm, 28*mm, 27*mm], 6.7),
           Spacer(1, 3*mm), fig("cv_metric_comparison.png", 130*mm),
-          p("Figure 3. Grouped-CV candidate Macro F1 and observation Top-1. Random Forest has slightly higher CV Top-1 than HGB; HGB wins the declared Macro F1 objective. Student-test is a development comparison, not the model-selection objective.", "SX"), PageBreak()]
+          p("Figure 4. Grouped-CV candidate Macro F1 and observation Top-1. Random Forest has slightly higher CV Top-1 than HGB; HGB wins the declared Macro F1 objective. Student-test is a development comparison, not the model-selection objective.", "SX"), PageBreak()]
 
 # per model config/rationale
-story += [p("4. Individual model settings and interpretation", "H1X"),
-          table([["Algorithm family", "Configuration used", "What it learns / objective", "Observed student result and limitations"],
-                 ["Logistic Regression", "StandardScaler; max_iter=300; C=1; balanced classes; seed 42", "Linear boundary in standardized feature space; logistic / cross-entropy loss.", "Top-1 57.80%; Macro F1 0.6088; log loss 0.4637. Fast inference, but linear boundary misses nonlinear feature interactions."],
-                 ["K-Nearest Neighbors", "StandardScaler; k=9; distance weights; Euclidean p=2; all CPU cores", "Scores from nearby examples in feature space; no fitted parametric loss.", "Top-1 66.11%; Macro F1 0.7233; log loss 0.5437. Flexible local decision; slowest inference (0.4632 s) and weaker probability calibration here."],
-                 ["Decision Tree", "max_depth=14; min_samples_leaf=4; class_weight=balanced; seed 42", "Recursive feature thresholds; Gini-style split impurity.", "Top-1 73.32%; Macro F1 0.7980; log loss 0.2287. Interpretable splits, but one tree can be unstable and overfit fine details."],
-                 ["Random Forest", "80 trees; max_depth=18; min_samples_leaf=2; sqrt features; balanced_subsample; seed 42", "Averages bootstrapped trees; classification impurity splits.", "Top-1 75.23%; Macro F1 0.8413; log loss 0.1400. Strong ensemble baseline; CV Top-1 slightly exceeds HGB, but CV Macro F1 is lower."],
-                 ["Hist Gradient Boosting", "100 iterations; learning_rate=.08; 15 leaf nodes; min_samples_leaf=20; L2=1; seed 42", "Sequential shallow trees correct prior errors; binary log-loss objective.", "Top-1 75.44%; Macro F1 0.8613; log loss 0.1067. Best candidate Macro F1 and student probability loss in this comparison; chosen by CV Macro F1."]],
-                [36*mm, 65*mm, 64*mm, 79*mm], 7),
-          Spacer(1, 4*mm), fig("student_model_comparison.png", 155*mm),
-          p("Figure 4. Student-set Top-1, candidate Macro F1, and log loss across the five model families. The table uses untuned comparison outputs; the tuned HGB comparison is reported separately.", "SX"),
-          p("Overfitting check: this run compares grouped validation and student-test performance, but does not record a matched training-score curve for every model. Therefore the report does not claim a quantified train/validation overfit gap. Fold variability and the student-vs-CV differences are shown as generalization evidence, with this limitation explicit."), PageBreak()]
+story += [p("5. Individual model settings and interpretation", "H1X"),
+          p("5.1 Logistic Regression", "H2X"),
+          p("Suitability: simple probability baseline. Phase 2 config: StandardScaler, C=1, max_iter=300, balanced classes, seed 42. It learns a linear boundary by minimizing binary logistic (cross-entropy) loss. Strength: fast and interpretable; limitation: cannot represent complex nonlinear feature interactions. Student: Top-1 57.80%, candidate Macro F1 0.6088, log loss 0.4637; grouped-CV Macro F1 0.6358 ± 0.0382. No matched training score was recorded, so a train-to-validation overfit gap cannot be quantified."),
+          p("5.2 K-Nearest Neighbors", "H2X"),
+          p("Suitability: local-neighborhood baseline. Config: StandardScaler, 9 neighbors, distance weighting, Euclidean distance (p=2), balanced fit sample capped at 5,000 rows. It uses nearby examples rather than optimizing a parametric training loss. Strength: flexible local decision boundary; limitation: prediction can be slow and probabilities less well calibrated. Student: Top-1 66.11%, Macro F1 0.7233, log loss 0.5437; CV Macro F1 0.7202 ± 0.0188; inference 0.4632 seconds. No matched training score was recorded."),
+          p("5.3 Decision Tree", "H2X"),
+          p("Suitability: interpretable nonlinear baseline. Config: max_depth=14, min_samples_leaf=4, balanced classes, seed 42. It chooses feature thresholds using Gini impurity. Strength: simple rules and nonlinear splits; limitation: a single tree can be unstable and overfit. Student: Top-1 73.32%, Macro F1 0.7980, log loss 0.2287; CV Macro F1 0.7981 ± 0.0143. No matched training score was recorded, so overfit is a risk to monitor, not a measured conclusion."),
+          p("5.4 Random Forest", "H2X"),
+          p("Suitability: robust ensemble of trees. Config: 80 trees, max_depth=18, min_samples_leaf=2, sqrt feature sampling, balanced_subsample class weights, seed 42. It averages bootstrapped trees trained with impurity-based splits. Strength: reduces the instability of one tree; limitation: more computation and less interpretability. Student: Top-1 75.23%, Macro F1 0.8413, log loss 0.1400; CV Macro F1 0.8327 ± 0.0183. CV Top-1 68.47% was slightly above HGB; no matched training score was recorded."),
+          p("5.5 Hist Gradient Boosting", "H2X"),
+          p("Suitability: nonlinear tabular candidate scoring. Untuned config: 100 iterations, learning_rate=0.08, max_leaf_nodes=15, min_samples_leaf=20, L2=1, seed 42. It adds trees sequentially to reduce binary log loss. Strength: captured useful feature interactions and achieved the highest CV Macro F1; limitation: less transparent and can need tuning. Student: Top-1 75.44%, Macro F1 0.8613, log loss 0.1067; CV Macro F1 0.8485 ± 0.0251. No matched training score was recorded, so do not claim a measured overfit gap. Tuned results are in Section 6."),
+          Spacer(1, 2*mm), fig("student_model_comparison.png", 123*mm),
+          p("Figure 5. Student-set Top-1, candidate Macro F1 and log loss; the chart uses untuned outputs for a like-for-like five-model comparison.", "SX"),
+          PageBreak()]
 
 # Bayesian tuning
-story += [p("5. Bayesian hyperparameter search", "H1X"),
+story += [p("6. Bayesian hyperparameter search", "H1X"),
           p("After selecting the HGB family, Optuna TPE searched 15 configurations. Each trial used the same five grouped training folds, and the objective was mean candidate Macro F1. Student-test and evaluator labels were excluded from the tuning objective."),
           table([["Parameter", "Search range"], ["max_iter", "60 to 240, step 20"], ["learning_rate", "0.025 to 0.20, log scale"], ["max_leaf_nodes", "7 to 31"], ["min_samples_leaf", "10 to 60"], ["l2_regularization", "0.0001 to 10, log scale"]], [55*mm, 75*mm]),
           Spacer(1, 3*mm), p("Best trial: max_iter=60; learning_rate=0.0259069; max_leaf_nodes=31; min_samples_leaf=47; l2_regularization=0.0487273."),
@@ -135,7 +154,7 @@ story += [p("5. Bayesian hyperparameter search", "H1X"),
           p("The tuned artifact was retained because it improves the declared grouped-CV objective and candidate Macro F1. It is not better on every metric; Top-1 and log loss are slightly worse on student-test. The search is modest (15 trials, one grouped-CV design), not an exhaustive or nested search.", "SX"), PageBreak()]
 
 # HMM and evaluation
-story += [p("6. Route reconstruction: Viterbi-style decoder", "H1X"),
+story += [p("7. Route reconstruction: Viterbi-style decoder", "H1X"),
           p("For each time step, hidden states are the 12 candidate arcs. The classifier probability provides an emission score: how well the candidate explains this GPS point. The transition score favors directed connectivity between consecutive arcs, mildly penalizes staying on the same arc, and penalizes disconnected arcs. For a time gap over five seconds, the disconnected penalty is relaxed. Dynamic programming stores best cumulative scores and backpointers, then traces back the best candidate sequence."),
           p("This is an initial HMM-style decoder, not a full shortest-path map matcher. It considers direct arc adjacency only; it does not search for intermediate road arcs between two GPS observations."),
           table([["Partition / measure", "Classifier only", "After Viterbi", "Change"],
@@ -149,7 +168,7 @@ story += [p("6. Route reconstruction: Viterbi-style decoder", "H1X"),
           p("Interpretation: route continuity improves sharply while pointwise accuracy drops. The current decoder overvalues local connectivity and needs a shortest-path transition model to improve the tradeoff. Scores use nearest-route-geometry labels and are not exact route-level accuracy."), PageBreak()]
 
 # Folium and app
-story += [p("7. Maps, API/UI and two-laptop operation", "H1X"),
+story += [p("8. Maps, API/UI and two-laptop operation", "H1X"),
           p("The API runs on Laptop 1 and the browser UI on Laptop 2. Both join the same local network. Laptop 2 connects to <font name='Courier'>http://&lt;Laptop-1-LAN-IP&gt;:8000</font>, receives the evaluator trip IDs, and sends the selected ID to <font name='Courier'>POST /api/predict/{trip_id}</font>. Laptop 1 constructs an inference copy with an empty route array, generates candidates, predicts, decodes, and creates a Folium map. Only afterward does the server compare predictions with its reference route and return aggregate metrics."),
           p("The evaluator UI shows observed GPS, candidate-road context (toggleable), predicted route and the map layer controls. The interactive generated map is stored by the API under <font name='Courier'>maps/evaluator_&lt;trip-id&gt;.html</font>; the source is in <font name='Courier'>src/pathsnap/visualize.py</font>."),
           Table([[fig("laptop2_connected.png", 121*mm), fig("laptop2_evaluator_result_map.png", 121*mm)]],
@@ -173,7 +192,7 @@ story += [p("7. Maps, API/UI and two-laptop operation", "H1X"),
           p("Serve the UI folder on Laptop 2 (for example, <font name='Courier'>python -m http.server 8080 --directory web</font>), open the UI in a browser, enter Laptop 1's LAN IP followed by <font name='Courier'>:8000</font>, and click Connect. Select an evaluator trip and click Evaluate trip. The Laptop 1 terminal should show <font name='Courier'>POST /api/predict/&lt;trip-id&gt; 200 OK</font>; the Laptop 2 page should show metrics and the predicted route."), PageBreak()]
 
 # Repro and deliverables
-story += [p("8. Reproduction, deliverables and limitations", "H1X"),
+story += [p("9. Reproduction, deliverables and limitations", "H1X"),
           p("Reproduction path in the repository:"),
           table([["Stage", "File to show", "Result"],
                  ["Explore dataset", "notebooks/01_Dataset_Exploration.ipynb", "Inventory, distributions, trajectory plots, Folium exploration."],
@@ -189,7 +208,7 @@ story += [p("8. Reproduction, deliverables and limitations", "H1X"),
           p("(1) Reference labels are approximated by nearest route geometry. (2) A 12-arc midpoint shortlist can miss the correct arc. (3) The tuning search used only 15 trials and one grouped-CV design. (4) The Viterbi-style decoder uses direct adjacency rather than shortest multi-arc paths. (5) Student and evaluator point accuracy both decrease after decoding, even though connectivity improves. (6) A successful API log was verified live, but the exact terminal screenshot still needs to be inserted into this PDF for the screenshot-specific report requirement."),
           p("Academic integrity note", "H2X"),
           p("Team members should review and understand the notebooks and results, explain the implementation in their own words, and disclose AI assistance according to course policy."),
-          p("The report builder reads committed output tables and figure assets. Rebuild with <font name='Courier'>.venv/bin/python reports/build_phase2_report.py</font> after updating those sources.", "SX")]
+          p("The report builder reads committed output tables and figure assets. Rebuild with <font name='Courier'>.venv/bin/python reports/build_technical_report.py</font> after updating those sources.", "SX")]
 
 doc.build(story, onFirstPage=footer, onLaterPages=footer)
 print(OUT)
