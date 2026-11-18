@@ -1,0 +1,9 @@
+{
+  "candidate_miss_rate": 0.063517745302714,
+  "classifier_top1_accuracy": 0.7545407098121085,
+  "viterbi_top1_accuracy": 0.5763569937369519,
+  "student_test_trips": 10,
+  "observations": 19160,
+  "classifier_direct_arc_continuity_trip_mean": 0.2540884923418488,
+  "viterbi_direct_arc_continuity_trip_mean": 0.7385736678787568
+}
