@@ -2,18 +2,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-import json, time
 import numpy as np
 from scipy.spatial import cKDTree
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score, f1_score, log_loss
-from sklearn.model_selection import GroupShuffleSplit
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import make_pipeline
-import joblib
 from .data import Trip, read_trip
 
 @dataclass
@@ -93,112 +83,6 @@ def generate_candidates(trip: Trip, k: int=16) -> CandidateBatch:
     miss=~np.any(cand_ids==truth[:,None],axis=1)
     return CandidateBatch(cand_ids,feats,truth,miss)
 
-
-def _flatten_batches(batches):
-    X=[]; y=[]; groups=[]
-    for trip_id,b in batches:
-        ok=(b.truth>=0)&(~b.candidate_miss)
-        xi=b.features[ok].reshape(-1,len(FEATURE_NAMES)); ids=b.ids[ok].reshape(-1); truths=np.repeat(b.truth[ok],b.ids.shape[1])
-        X.append(xi); y.append((ids==truths).astype(np.int8)); groups.extend([trip_id]*len(xi))
-    return np.concatenate(X),np.concatenate(y),np.asarray(groups)
-
-
-def _estimators(seed=42):
-    return {
-        "Logistic Regression": make_pipeline(StandardScaler(),LogisticRegression(max_iter=250,class_weight="balanced",random_state=seed)),
-        "KNN": make_pipeline(StandardScaler(),KNeighborsClassifier(n_neighbors=9,weights="distance",n_jobs=-1)),
-        "Decision Tree": DecisionTreeClassifier(max_depth=14,min_samples_leaf=4,class_weight="balanced",random_state=seed),
-        "Random Forest": RandomForestClassifier(n_estimators=80,max_depth=18,min_samples_leaf=2,class_weight="balanced_subsample",n_jobs=-1,random_state=seed),
-        "Hist Gradient Boosting": HistGradientBoostingClassifier(max_iter=100,learning_rate=.08,max_leaf_nodes=15,l2_regularization=1.0,random_state=seed),
-    }
-
-
-def _evaluate(model, batches):
-    top_correct=total=0; cand_miss=0; candidate_y=[]; candidate_p=[]; t0=time.perf_counter()
-    for _,b in batches:
-        n,k=b.ids.shape; X=b.features.reshape(-1,b.features.shape[-1])
-        if hasattr(model,"predict_proba"): p=model.predict_proba(X)[:,1]
-        else: p=model.decision_function(X); p=1/(1+np.exp(-np.clip(p,-30,30)))
-        p=p.reshape(n,k)
-        valid=b.truth>=0
-        choices=np.argmax(p,axis=1); pred=b.ids[np.arange(n),choices]
-        top_correct+=int(np.sum((pred==b.truth)&valid)); total+=int(valid.sum()); cand_miss+=int(np.sum(b.candidate_miss&valid))
-        candidate_y.append((b.ids[valid].reshape(-1)==np.repeat(b.truth[valid],k)).astype(np.int8))
-        candidate_p.append(p[valid].reshape(-1))
-    elapsed=time.perf_counter()-t0
-    yy=np.concatenate(candidate_y); pp=np.concatenate(candidate_p)
-    hard=(pp>=.5).astype(np.int8)
-    return {"top1_accuracy":top_correct/max(total,1),"candidate_miss_rate":cand_miss/max(total,1),"candidate_macro_f1":f1_score(yy,hard,average="macro",zero_division=0),"candidate_log_loss":log_loss(yy,np.clip(pp,1e-6,1-1e-6),labels=[0,1]),"inference_seconds":elapsed,"observations":total}
-
-
-def train_compare(data_dir: Path, out_dir: Path, k=12, seed=42, max_candidates=200_000):
-    train_root=data_dir/"train"; test_root=data_dir/"student_test"
-    train_trips=[read_trip(p,"train") for p in sorted(train_root.iterdir()) if p.is_dir() and (p/f"{p.name}.track").exists()]
-    test_trips=[read_trip(p,"student_test") for p in sorted(test_root.iterdir()) if p.is_dir() and (p/f"{p.name}.track").exists()]
-    train_batches=[(t.trip_id,generate_candidates(t,k)) for t in train_trips]
-    test_batches=[(t.trip_id,generate_candidates(t,k)) for t in test_trips]
-    # Reserve whole training trips for an initial phase-1 validation split.
-    splitter=GroupShuffleSplit(n_splits=1,test_size=.2,random_state=seed)
-    batch_groups=np.asarray([tid for tid,_ in train_batches])
-    fit_idx,val_idx=next(splitter.split(np.arange(len(train_batches)),groups=batch_groups))
-    fit_batches=[train_batches[i] for i in fit_idx]; val_batches=[train_batches[i] for i in val_idx]
-    X,y,groups=_flatten_batches(fit_batches)
-    rng=np.random.default_rng(seed)
-    pos=np.flatnonzero(y==1); neg=np.flatnonzero(y==0)
-    neg_keep=rng.choice(neg,size=min(len(neg),max(4*len(pos),1)),replace=False)
-    take=np.concatenate((pos,neg_keep))
-    if len(take)>max_candidates: take=rng.choice(take,size=max_candidates,replace=False)
-    X,y=X[take],y[take]
-    rows=[]; models={}; fitted_for_validation={}
-    for name,model in _estimators(seed).items():
-        sample_limit=5000 if name=="KNN" else len(y)
-        fit_rows=np.arange(len(y))
-        if len(fit_rows)>sample_limit:
-            # Balanced subsampling keeps KNN inference practical and reproducible.
-            positives=fit_rows[y==1]; negatives=fit_rows[y==0]
-            take_pos=rng.choice(positives,size=min(len(positives),sample_limit//2),replace=False)
-            take_neg=rng.choice(negatives,size=min(len(negatives),sample_limit-len(take_pos)),replace=False)
-            fit_rows=np.concatenate((take_pos,take_neg))
-        start=time.perf_counter(); model.fit(X[fit_rows],y[fit_rows]); train_s=time.perf_counter()-start
-        val_metrics=_evaluate(model,val_batches)
-        test_metrics=_evaluate(model,test_batches)
-        rows.append({"model":name,"training_seconds":train_s,
-                     **{f"validation_{key}":value for key,value in val_metrics.items()},
-                     **{f"student_test_{key}":value for key,value in test_metrics.items()}})
-        fitted_for_validation[name]=model
-    # Transparent no-learning baseline: nearest segment among generated candidates.
-    def geometric_eval(batches):
-        correct=seen=miss=0
-        for _,batch in batches:
-            ix=np.argmin(batch.features[:,:,0],axis=1); pred=batch.ids[np.arange(len(ix)),ix]; valid=batch.truth>=0
-            correct+=int(np.sum((pred==batch.truth)&valid)); seen+=int(valid.sum()); miss+=int(np.sum(batch.candidate_miss&valid))
-        return {"top1_accuracy":correct/max(seen,1),"candidate_miss_rate":miss/max(seen,1),"observations":seen}
-    for split,batches in (("validation",val_batches),("student_test",test_batches)):
-        metrics=geometric_eval(batches)
-        row={"model":"Nearest road segment"}
-        row.update({f"{split}_{key}":value for key,value in metrics.items()})
-        if split=="validation": rows.insert(0,row)
-        else: rows[0].update({f"student_test_{key}":value for key,value in metrics.items()})
-    # Select by trip-held-out top-1 accuracy, then refit that choice on all 80 training trips.
-    learned=[r for r in rows if r["model"]!="Nearest road segment"]
-    selected=max(learned,key=lambda r:r["validation_top1_accuracy"])["model"]
-    all_X,all_y,_=_flatten_batches(train_batches)
-    pos=np.flatnonzero(all_y==1); neg=np.flatnonzero(all_y==0)
-    neg_keep=rng.choice(neg,size=min(len(neg),max(4*len(pos),1)),replace=False)
-    take=np.concatenate((pos,neg_keep))
-    if len(take)>max_candidates: take=rng.choice(take,size=max_candidates,replace=False)
-    final_model=_estimators(seed)[selected]
-    fit_rows=np.arange(len(take))
-    if selected=="KNN" and len(fit_rows)>5000: fit_rows=rng.choice(fit_rows,size=5000,replace=False)
-    final_model.fit(all_X[take][fit_rows],all_y[take][fit_rows])
-    out_dir.mkdir(parents=True,exist_ok=True)
-    import csv
-    with (out_dir/"model_comparison.csv").open("w",newline="",encoding="utf-8") as f:
-        fields=list(dict.fromkeys(k for row in rows for k in row)); w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(rows)
-    joblib.dump({"model":final_model,"model_name":selected,"feature_names":FEATURE_NAMES,"candidate_k":k,"seed":seed},out_dir/"phase1_model.joblib")
-    summary={"candidate_k":k,"feature_names":FEATURE_NAMES,"training_trips":len(train_trips),"student_test_trips":len(test_trips),"training_candidate_rows":int(len(y)),"positive_training_candidates":int(y.sum()),"validation_trip_count":len(val_batches),"selected_model_by_validation_top1":selected,"results":rows}
-    (out_dir/"training_summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
-    return rows,selected,final_model
 
 def predict_batch(model, batch: CandidateBatch):
     n,k=batch.ids.shape

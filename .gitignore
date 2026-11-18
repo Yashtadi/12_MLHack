@@ -1,12 +1,14 @@
+# Local environment and input data
 .venv/
 __pycache__/
 *.py[cod]
-data/raw/
-data/Student\ folder/
 .env
+data/raw/
+data/Student folder/
 node_modules/
 web/dist/
 .mplconfig/
 
+# Per-click demo artifacts (the notebooks keep their selected-trip maps)
 maps/phase1_????????.html
 outputs/phase1_????????.json

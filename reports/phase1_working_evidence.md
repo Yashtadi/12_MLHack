@@ -1,72 +1,58 @@
-# Phase 1 working evidence
+# Round 1 working evidence
 
-## Preprocessing performed
+## Data and preprocessing
 
-1. Read the four headerless per-trip files using fixed schemas: GPS (longitude, latitude, timestamp), nodes (longitude, latitude), arcs (from node, to node), and route arc-row IDs.
-2. Drop GPS rows with non-finite values or coordinates outside valid longitude/latitude bounds. Preserve observation order and drop duplicate/backward timestamps rather than sorting a trajectory.
-3. Keep GPS gaps in the sequence; compute speed using the actual elapsed timestamp so a gap is not mistaken for a one-second step.
-4. Project each trip to a local metre-scale coordinate frame before distance and segment calculations. Exclude arcs with invalid node references and zero geometric length from candidate geometry.
-5. Generate 12 nearby road-segment candidates per observation from segment midpoints using a spatial index, then calculate exact point-to-segment features.
-6. Build training labels by matching each GPS observation to the closest road segment in that trip’s supplied reference route. Candidate-miss observations are measured and omitted from binary candidate-ranker fitting because the correct segment is absent from their candidate list.
+The supplied archive contains 80 training trips (208,417 GPS observations) and 10 student-test trips (19,160 observations). The evaluator partition was not present. Each trip has four headerless files: `.track` (longitude, latitude, timestamp), `.nodes` (longitude, latitude), `.arcs` (directed node-row pairs), and `.route` (reference arc-row IDs).
 
-The supplied dataset audit found 0 invalid-coordinate rows and 0 non-increasing timestamps in the inspected partitions. So the cleaning rules ran, but did not remove rows from these files. The 1-second sampling pattern is nominal; gaps over 5 seconds are retained and reported.
+The preprocessing notebook shows the schema checks and cleaning decisions. GPS rows with non-finite values, invalid coordinate ranges, or non-increasing timestamps are excluded while original sequence order is preserved. In the inspected partitions there were zero invalid-coordinate rows and zero non-increasing timestamps, so cleaning removed no observations. Gaps over five seconds are retained and reported; speed uses elapsed time. Geographic coordinates are projected to a local metre-scale frame before distance calculations. Road arcs with invalid node references or zero length are excluded from candidate geometry.
 
-## Feature choices and reasons
+## Candidate generation and features
 
-| Feature | What it describes | Why use it for road matching |
-|---|---|---|
-| Distance to segment (m) | Perpendicular distance from GPS point to candidate road segment | Noisy GPS is usually closest to the traveled road; metre units make distance interpretable. |
-| Heading difference (radians) | Difference between the vehicle’s recent direction and candidate segment direction | Helps distinguish nearby parallel or oppositely directed roads. |
-| Along-segment fraction | Projected position between the segment endpoints, clipped to 0–1 | Indicates whether the point lies near the candidate segment’s span versus near its extension. |
-| Segment length (m) | Length of the candidate arc | Provides local geometry context for interpreting distance and endpoint position. |
-| GPS speed (m/s) | Distance moved since the previous observation divided by elapsed seconds | Adds movement context and respects irregular time gaps. |
+For each GPS point, a KD-tree retrieves the 12 nearest road-segment midpoints. Exact projection onto each candidate segment then provides distance and along-segment position. The notebook displays the projection equations and one worked feature example. Reference labels are assigned to the closest segment in the supplied route. If that segment is absent from the 12 candidates, the observation is recorded as a candidate miss and cannot be recovered by a downstream classifier.
 
-This is a compact, task-motivated phase-1 feature set. A formal feature-ablation study has not yet been run, so the team should not claim these are globally optimal. Logistic Regression and KNN use standardized features; tree models use the metre/radian feature values directly.
+| Feature | Meaning | Reason to include | Permutation importance (mean F1 drop) |
+|---|---|---|---:|
+| Distance (m) | Point-to-segment perpendicular distance | Main physical proximity cue | 0.1944 |
+| Heading difference (rad) | Wrapped difference between recent GPS direction and road direction | Helps distinguish nearby parallel/opposite roads | 0.1166 |
+| Along-segment fraction | Clipped projection position between endpoints (0–1) | Indicates whether the point lies along the arc span | 0.1977 |
+| Segment length (m) | Candidate arc length | Local geometry context | 0.0054 |
+| GPS speed (m/s) | Previous displacement divided by actual elapsed seconds | Movement context, including irregular gaps | 0.0070 |
+
+Permutation importance was measured on 12,000 candidate rows from held-out training trips. It is a first diagnostic, not a causal result or formal ablation. Length and speed contributed little under this setup; the next phase should test feature removal and stronger temporal features.
 
 ## Five-model comparison
 
-Models were fitted on candidate rows from 64 training trips; 16 whole training trips were held out for phase-1 validation. All five learned models used the same candidate features and labels. Student-test results are shown as development-stage comparisons only. The candidate-miss rate is shared by models because candidate generation is shared.
+A fixed random seed reserves 16 whole training trips for validation and fits on the other 64. Keeping whole trips together prevents observations from the same trip appearing in both fit and validation sets. Each method sees the same five features and labels. The nearest-road baseline selects the candidate with minimum distance. For learned models, the positive candidate is the candidate whose arc matches the approximate route label. To reduce class imbalance, training keeps all positive rows and samples up to four negatives per positive (subject to the notebook's cap). Logistic Regression and KNN standardize features; tree methods use the original units.
 
-| Model | Validation Top-1 | Validation candidate Macro F1 | Student-test Top-1 | Student-test candidate Macro F1 | Student-test log loss | Inference seconds (student test) |
-|---|---:|---:|---:|---:|---:|---:|
-| Nearest road segment | 55.37% | — | 53.48% | — | — | — |
-| Logistic Regression | 55.22% | 0.6301 | 56.50% | 0.6022 | 0.4722 | 0.0047 |
-| KNN | 60.79% | 0.6965 | 65.69% | 0.7251 | 0.5413 | 0.4709 |
-| Decision Tree | 68.87% | 0.7989 | 72.94% | 0.8024 | 0.2230 | 0.0076 |
-| Random Forest | 71.09% | 0.8323 | 75.14% | 0.8414 | 0.1385 | 0.1834 |
-| Hist Gradient Boosting | 71.45% | 0.8478 | 75.45% | 0.8609 | 0.1065 | 0.1146 |
+| Model | Validation Top-1 | Student-test Top-1 | Student-test candidate Macro F1 | Student-test log loss |
+|---|---:|---:|---:|---:|
+| Nearest road segment | 55.37% | 53.48% | — | — |
+| Logistic Regression | 55.22% | 56.50% | 0.6022 | 0.4722 |
+| KNN | 60.79% | 65.69% | 0.7251 | 0.5413 |
+| Decision Tree | 68.87% | 72.94% | 0.8024 | 0.2230 |
+| Random Forest | 71.09% | 75.14% | 0.8414 | 0.1385 |
+| Hist Gradient Boosting | **71.45%** | **75.45%** | **0.8609** | **0.1065** |
 
-### Recorded initial configurations
+Top-1 is pointwise: choose the highest-scoring candidate for each GPS point and compare it with the approximate route label. Candidate Macro F1 and log loss are binary candidate-row metrics (correct candidate versus alternative candidate), not a shared global road-ID classification score. Student-test numbers are development comparisons, not evaluator results.
 
-| Model | Phase-1 configuration |
-|---|---|
-| Logistic Regression | StandardScaler; max_iter=250; class_weight=balanced |
-| KNN | StandardScaler; k=9; distance-weighted neighbors; 5,000 balanced candidate rows for practical inference |
-| Decision Tree | max_depth=14; min_samples_leaf=4; class_weight=balanced |
-| Random Forest | 80 trees; max_depth=18; min_samples_leaf=2; balanced_subsample |
-| Hist Gradient Boosting | 100 boosting iterations; learning_rate=0.08; max_leaf_nodes=15; L2=1.0 |
+## Why Hist Gradient Boosting was selected
 
-### Initial model choice
+The selection rule was the highest Top-1 accuracy on the held-out training trips. Hist Gradient Boosting achieved 71.45%, just 0.36 percentage points above Random Forest at 71.09%. It also scored slightly higher on the student-test development partition in this run. After selection, the notebook refits the chosen configuration on all 80 training trips and saves `outputs/phase1_model.joblib`. Because the validation margin is small and validation uses one split, this is a provisional choice. Group-aware cross-validation, feature ablation, and tuning are still needed.
 
-**Hist Gradient Boosting** is the provisional phase-1 selection because it had the highest whole-trip validation Top-1 accuracy (71.45%), narrowly above Random Forest (71.09%). It also had lower measured student-test inference time than Random Forest (0.115s vs 0.183s) and the highest student-test Top-1 in this initial comparison (75.45%).
-The validation margin over Random Forest is small (about 0.36 percentage points), so this is an initial choice, not a final claim of superiority. A later phase should use group-aware cross-validation, hyperparameter search, probability calibration, and a candidate-generation ablation before finalizing the model.
+## Initial Viterbi result
 
-Candidate Macro F1 and log loss here are computed at the binary candidate-row level (correct candidate vs other candidate), not as a globally shared road-ID classification score. Arc IDs are local to each trip.
+Across the 10 student-test trips, classifier Top-1 was 75.45% and Viterbi Top-1 was 57.64%. Strict direct-arc continuity increased from 25.41% to 73.86%. The first decoder therefore makes sequences more locally connected while reducing pointwise matches. It is included as a working demonstration and requires multi-arc path costs, elapsed-time-aware transitions, and tuning on permitted development data.
 
-## Initial HMM/Viterbi comparison
+## What the live demo shows
 
-On all 10 student-test trips (19,160 observations), classifier Top-1 was 75.45% and the initial HMM/Viterbi output was 57.64%. The strict direct-arc continuity rate changed from 25.41% to 73.86% (trip-average).
+The local interface takes a student-test trip, generates candidates, applies the saved classifier, runs Viterbi, and displays GPS points, road context, reference route, and predicted route on an interactive map. The reference labels are used only for development metrics. Everything runs on one laptop.
 
-This is a visible working decoder, but its first transition rule trades pointwise accuracy for direct adjacency. Treat it as an initial prototype and a clear next improvement: allow plausible multi-arc paths between GPS samples, account for elapsed time and speed, and tune decoder parameters on permitted development data. Do not describe the current decoder as improving accuracy.
+## Phase 1 limitations
 
-## Reproducible demonstration
-
-The local web app lets a reviewer select a student-test trip, runs candidate generation → selected classifier → Viterbi decoding, and displays the predicted route, metrics, and an interactive Folium map with GPS points, reference route, candidate road context, and predicted route. The app and API run on one laptop.
-
-## Phase-1 limits
-
-- Evaluator-test data was not included in the supplied ZIP and was not used.
-- Initial validation is a single trip-wise holdout rather than the full group-aware cross-validation requested for the complete submission.
-- The route label for each observation is approximated by nearest geometry on the supplied route sequence; candidate misses remain a measurable ceiling.
-- The Viterbi transition model is an initial implementation; the first all-test comparison shows an accuracy/continuity tradeoff that needs improvement.
-- Feature ablations, Bayesian optimization, full final report, and the final evaluator-facing trip flow remain later work.
+- No evaluator partition was included.
+- The validation is one trip-wise holdout rather than group cross-validation.
+- Route labels are approximate nearest-geometry labels.
+- Candidate recall limits every model.
+- Feature importance is preliminary; no feature-ablation experiment has been completed.
+- Viterbi improves direct continuity while lowering Top-1 accuracy.
+- Bayesian optimization and final evaluator integration remain later-phase work.

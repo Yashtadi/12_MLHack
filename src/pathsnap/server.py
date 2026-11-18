@@ -27,7 +27,7 @@ def trips():
 
 @app.post("/api/predict/{trip_id}")
 def predict(trip_id: str):
-    if not MODEL_PATH.exists(): raise HTTPException(503,"Train the phase-1 model first: python src/train_phase1.py")
+    if not MODEL_PATH.exists(): raise HTTPException(503,"Run all cells in notebooks/04_ML_Model_Training.ipynb to train the phase-1 model first")
     trip_path=DATA/"student_test"/trip_id
     if not (trip_path/f"{trip_id}.track").exists(): raise HTTPException(404,"Trip is not in the development student-test partition")
     bundle=joblib.load(MODEL_PATH); trip=read_trip(trip_path,"student_test")

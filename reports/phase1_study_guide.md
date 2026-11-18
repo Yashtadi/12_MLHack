@@ -1,51 +1,39 @@
-# Phase 1 study guide and demo script
+# Round 1 presenter walkthrough
 
 ## 60-second problem explanation
 
-GPS points can drift away from the road because of noise, buildings, and sampling gaps. PathSnap takes a sequence of GPS observations and the trip’s road graph, proposes nearby road segments for each observation, scores those candidates, then uses the order of observations and road connectivity to reconstruct a more coherent route.
+GPS is noisy, so recorded points can fall beside the road the vehicle actually used. PathSnap receives GPS points and a trip-specific road graph. It proposes nearby road segments for each point, scores them using geometry and movement, then uses the sequence and road connectivity to form a route.
 
-The four files are `.track` (longitude, latitude, time), `.nodes` (road-node coordinates), `.arcs` (directed connections between node rows), and `.route` (reference arc-row IDs in travel order).
+The four files are `.track` (GPS longitude, latitude, time), `.nodes` (road coordinates), `.arcs` (directed connections between node rows), and `.route` (reference arc-row IDs in travel order). Arc IDs are local to a trip.
 
-## Explain the preprocessing
+## Walk the notebooks in order
 
-1. Read each headerless file with its known column count and keep trips grouped by their directory.
-2. Remove GPS rows only when coordinates/timestamps are invalid, coordinates exceed valid longitude/latitude ranges, or time does not increase. Preserve row order; do not shuffle a trajectory.
-3. The supplied partitions had zero invalid coordinates and zero backwards/duplicate timestamps, so these rules removed no rows in this run.
-4. Keep large time gaps and compute speed using the real timestamp delta; a long gap must not be treated as one second.
-5. Convert coordinates to a local metre-scale plane before distance calculations. Degrees are angular units and are unsuitable for direct physical-distance comparisons.
-6. Exclude road arcs with invalid node references or zero length from candidate geometry.
-7. For each GPS point, retrieve 12 segment midpoints from a KD-tree, then calculate the exact nearest point on each segment. Measure how often the reference road is missing from those candidates.
+1. **Dataset exploration:** show the inventory of 80 training and 10 student-test trips, the four schemas, GPS quality checks, timestamp gaps, trip-size summaries, and the sample map. Mention that the evaluator partition was not supplied.
+2. **Preprocessing:** show invalid-value checks, timestamp handling, how gaps are preserved, coordinate projection to metres, graph validity checks, and the resulting clean arrays. The quality checks found no invalid coordinates or non-increasing timestamps, so this run did not drop rows.
+3. **Candidates and features:** explain the KD-tree shortlist of 12 nearby segment midpoints. Show the visible worked formula: project the GPS point onto each segment, clip the fraction to [0,1], then measure distance. Explain the five features: distance, heading difference, along-segment fraction, segment length, and GPS speed. The first three ranked highest in the preliminary permutation-importance check. Candidate-miss rate matters because a model cannot select a road that candidate generation omitted.
+4. **Model training:** show the whole-trip split (64 fit trips, 16 validation trips), balanced candidate sampling, each model's setup, fit loop, validation metrics, and winner-selection rule. This is actual training code and saved model output, not a report-only notebook.
+5. **Evaluation:** show the comparison table, preliminary feature importance, refit model artifact, student-test results, and Folium route map.
 
-## Explain the five features
+## Explain why this model was chosen
 
-- **Distance to segment:** closest physical separation in metres; usually a strong cue for which road generated the GPS point.
-- **Heading difference:** compares recent vehicle motion with the candidate road direction; helps separate nearby parallel or opposite-direction roads.
-- **Along-segment fraction:** tells whether the GPS point projects near the segment’s span or beyond its endpoint.
-- **Segment length:** gives context about the candidate edge geometry.
-- **Speed:** adds movement context and accounts for irregular time gaps.
+The five trained methods are Logistic Regression, KNN, Decision Tree, Random Forest, and Hist Gradient Boosting. We choose using validation Top-1 on held-out trips, not by the student-test scores. Hist Gradient Boosting reached 71.45%, narrowly ahead of Random Forest at 71.09%, so it is our provisional Round 1 model. We refit it on all 80 training trips after choosing it. The lead is only 0.36 percentage points; one split is not enough to claim it is definitively best.
 
-This is a compact, physically motivated first set, not a claim that formal feature selection is complete. Feature ablation is still needed.
+Top-1 means the highest-ranked candidate matches the approximate reference label at an observation. Candidate Macro F1 and log loss treat each candidate as correct or alternative, since road IDs cannot be shared across trip-specific graphs.
 
-## Explain model choice with the measured results
+## Explain the Viterbi result honestly
 
-Five models were trained with the same candidate features: Logistic Regression, KNN, Decision Tree, Random Forest, and Hist Gradient Boosting. Whole trips were held out from the 80 training trips, so points from one trip did not leak into both fit and validation.
+Across the 10 student-test trips, the classifier had 75.45% Top-1 and the initial Viterbi decoder had 57.64%. Direct arc-to-arc continuity increased from 25.41% to 73.86%. The decoder trades pointwise accuracy for locally connected routes. Describe it as a working prototype, not an accuracy improvement. The next step is to score plausible multi-arc paths using time and distance.
 
-Hist Gradient Boosting was selected provisionally because it had the best holdout Top-1 accuracy (**71.45%**) versus Random Forest (**71.09%**), and slightly higher student-test Top-1 (**75.45%** vs **75.14%**) with faster measured inference in this run (**0.108 s** vs **0.192 s**). The holdout gap is only about 0.36 percentage points, so explain that this is an early choice that needs group cross-validation and tuning.
+## Show the live demo
 
-Top-1 accuracy means the highest-scored candidate matches the reference road for that GPS observation. Candidate Macro F1 and log loss are calculated over binary candidate rows (correct candidate versus other candidate), because local arc IDs are not shared across trips. Candidate miss rate is the fraction of observations whose reference road was absent from the 12 candidates; no classifier can recover a segment it was never offered.
+Start the app from the project folder with:
 
-## Explain the HMM/Viterbi demo honestly
+```bash
+uvicorn pathsnap.server:app --app-dir src --host 127.0.0.1 --port 8000
+```
 
-The initial decoder favors adjacent directed arcs. Across the 10 student-test trips, strict direct-arc continuity rose from **25.41%** to **73.86%**, while Top-1 accuracy fell from **75.45%** to **57.64%**. This shows the tradeoff: stronger connectivity can make a sequence look more coherent but can override locally correct classifications. The next improvement is to allow realistic multi-arc paths between samples, use time and distance to score transitions, and tune only on permitted development partitions.
+Open `http://127.0.0.1:8000`, choose a student-test trip, and click **Predict route**. Explain the flow: GPS and graph → candidate arcs and features → saved Hist Gradient Boosting scores → Viterbi path → Folium map. The reference route is used for development metrics.
 
-## Click-through demonstration
+## Key limitations to disclose
 
-1. From `ML_hackathon`, start the app with `uvicorn pathsnap.server:app --app-dir src --host 127.0.0.1 --port 8000`.
-2. Open `http://127.0.0.1:8000` and select a student-test trip.
-3. Click **Predict route**. Explain that the API uses GPS, the road graph, the candidate features, and the saved Hist Gradient Boosting model; the reference route is used only to calculate development metrics.
-4. Show the map layers for observed GPS, candidate road context, reference route, and predicted route.
-5. Show `reports/phase1_working_evidence.md`, `outputs/model_comparison.csv`, and `outputs/route_decoder_comparison.csv` as the evidence behind the choices.
-
-## Be clear about what is unfinished
-
-The evaluator-only partition was not in the supplied ZIP. Bayesian optimization, group-aware cross-validation, feature ablations, a stronger route-transition model, and final evaluator integration are future steps. Do not describe the initial phase-1 metrics as final evaluation results.
+The evaluator-only partition was unavailable. Validation is one trip-wise holdout; feature selection is preliminary and needs ablation; candidate labels use nearest route geometry; and the Viterbi step improves direct continuity while lowering Top-1. The results are initial development evidence, not final evaluator performance.
